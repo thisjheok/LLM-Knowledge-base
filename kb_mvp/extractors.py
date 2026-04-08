@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 import json
@@ -110,7 +110,7 @@ def extract_html(path: Path) -> ExtractedDocument:
         source_type="html",
         source_path=str(path),
         source_url=source_url,
-        extracted_at=datetime.now(UTC).isoformat(),
+        extracted_at=datetime.now(timezone.utc).isoformat(),
         headings=dedupe_keep_order(parser.headings),
         text=text,
         description=description,
@@ -127,7 +127,7 @@ def extract_markdown_or_text(path: Path) -> ExtractedDocument:
         source_type="markdown" if path.suffix.lower() == ".md" else "text",
         source_path=str(path),
         source_url=None,
-        extracted_at=datetime.now(UTC).isoformat(),
+        extracted_at=datetime.now(timezone.utc).isoformat(),
         headings=dedupe_keep_order(headings),
         text=raw_text.strip(),
         description=None,

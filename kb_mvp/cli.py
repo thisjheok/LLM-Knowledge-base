@@ -8,8 +8,9 @@ import sys
 from .compiler import compile_vault
 from .config import build_paths, ensure_layout
 from .health import run_health_check
+from .maintenance import run_concept_review
 from .llm import LLMClient, OllamaLLMClient
-from .search import search_notes
+from .search import search_wiki
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -44,8 +45,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     answer = subparsers.add_parser("answer", help="Answer a question using compiled notes")
     answer.add_argument("question", help="Question to ask against the compiled notes")
+    answer.add_argument(
+        "--answer-top-k-contexts",
+        type=int,
+        default=int(os.environ.get("KB_ANSWER_TOP_K_CONTEXTS", "3")),
+        help="Maximum number of source notes to include in the answer prompt",
+    )
+    answer.add_argument(
+        "--answer-max-tokens",
+        type=int,
+        default=int(os.environ.get("KB_ANSWER_MAX_TOKENS", "384")),
+        help="Maximum number of tokens requested from Ollama for the answer",
+    )
 
     subparsers.add_parser("health-check", help="Run a simple vault health check")
+    subparsers.add_parser("concept-review", help="Review similar concepts and write a report only")
     return parser
 
 
@@ -55,7 +69,6 @@ def main(argv: list[str] | None = None) -> int:
     project_root = Path(args.project_root).resolve()
     paths = build_paths(project_root)
     ensure_layout(paths)
-    llm_client = build_llm_client(args)
 
     if args.command == "init":
         ensure_sample_raw(paths.raw)
@@ -63,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "compile":
+        llm_client = build_llm_client(args)
         results = compile_vault(paths, llm_client)
         print(f"Compiled {len(results)} raw document(s)")
         for result in results:
@@ -70,9 +84,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "answer":
-        hits = search_notes(paths.sources, args.question)
-        contexts = [(hit.title, hit.snippet) for hit in hits]
-        answer = llm_client.answer_question(args.question, contexts)
+        llm_client = build_llm_client(args)
+        hits = search_wiki(paths, args.question)
+        contexts = [(f"{hit.note_type}:{hit.title}", hit.answer_context) for hit in hits[: args.answer_top_k_contexts]]
+        answer = llm_client.answer_question(
+            args.question,
+            contexts,
+            max_contexts=args.answer_top_k_contexts,
+            max_tokens=args.answer_max_tokens,
+        )
         output_path = paths.outputs / "latest-answer.md"
         output_path.write_text(answer + "\n", encoding="utf-8")
         print(answer)
@@ -82,6 +102,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "health-check":
         findings, report_path = run_health_check(paths)
         print(f"Health check complete: {len(findings)} finding(s)")
+        print(f"Report: {report_path}")
+        return 0
+
+    if args.command == "concept-review":
+        llm_client = build_llm_client(args)
+        reviews, report_path = run_concept_review(paths, llm_client)
+        print(f"Concept review complete: {len(reviews)} candidate review(s)")
         print(f"Report: {report_path}")
         return 0
 
