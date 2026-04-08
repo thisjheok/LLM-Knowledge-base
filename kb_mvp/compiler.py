@@ -6,7 +6,7 @@ from typing import Iterable
 
 from .config import VaultPaths
 from .extractors import ExtractedDocument, extract_document, save_normalized, SUPPORTED_EXTENSIONS
-from .llm import HeuristicLLMClient, LLMClient
+from .llm import LLMClient
 
 
 @dataclass
@@ -16,8 +16,7 @@ class CompileResult:
     normalized_path: Path
 
 
-def compile_vault(paths: VaultPaths, llm_client: LLMClient | None = None) -> list[CompileResult]:
-    llm_client = llm_client or HeuristicLLMClient()
+def compile_vault(paths: VaultPaths, llm_client: LLMClient) -> list[CompileResult]:
     results: list[CompileResult] = []
     for raw_file in sorted(iter_raw_files(paths.raw)):
         document = extract_document(raw_file)

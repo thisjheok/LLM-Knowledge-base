@@ -9,31 +9,6 @@ from urllib import error, request
 from .extractors import ExtractedDocument
 
 
-STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "for",
-    "from",
-    "how",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "this",
-    "to",
-    "was",
-    "with",
-}
 CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]")
 
 
@@ -50,30 +25,6 @@ class LLMClient:
 
     def answer_question(self, question: str, contexts: list[tuple[str, str]]) -> str:
         raise NotImplementedError
-
-
-class HeuristicLLMClient:
-    """A deterministic stand-in so the MVP works without external APIs."""
-
-    def compile_document(self, document: ExtractedDocument) -> CompiledNote:
-        sentences = split_sentences(document.text)
-        summary = " ".join(sentences[:3]).strip() or "Summary unavailable."
-        key_points = []
-        if document.description:
-            key_points.append(document.description)
-        key_points.extend(sentences[:5])
-        key_points = dedupe_keep_order([point for point in key_points if point])[:5]
-        related_concepts = top_keywords(document.text, limit=5)
-        return CompiledNote(summary=summary, key_points=key_points, related_concepts=related_concepts)
-
-    def answer_question(self, question: str, contexts: list[tuple[str, str]]) -> str:
-        if not contexts:
-            return "No relevant notes were found yet. Run the compile step first or add more raw documents."
-        lines = [f"Question: {question}", ""]
-        lines.append("Most relevant notes:")
-        for title, snippet in contexts[:3]:
-            lines.append(f"- {title}: {snippet}")
-        return "\n".join(lines)
 
 
 class OllamaLLMClient(LLMClient):
@@ -182,24 +133,6 @@ class OllamaLLMClient(LLMClient):
         except json.JSONDecodeError as exc:
             raise RuntimeError("Ollama returned a non-JSON translation response.") from exc
         return rewritten
-
-
-def split_sentences(text: str) -> list[str]:
-    normalized = re.sub(r"\s+", " ", text).strip()
-    if not normalized:
-        return []
-    parts = re.split(r"(?<=[.!?])\s+", normalized)
-    return [part.strip() for part in parts if part.strip()]
-
-
-def top_keywords(text: str, limit: int = 5) -> list[str]:
-    counts: dict[str, int] = {}
-    for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", text.lower()):
-        if token in STOPWORDS:
-            continue
-        counts[token] = counts.get(token, 0) + 1
-    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
-    return [token for token, _ in ranked[:limit]]
 
 
 def dedupe_keep_order(values: list[str]) -> list[str]:

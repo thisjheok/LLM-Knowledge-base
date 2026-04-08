@@ -13,17 +13,15 @@ It is intentionally simple:
 - questions can be answered from compiled notes without a vector DB
 - a health check reports missing summaries and broken wiki links
 
-The current MVP ships with two backends:
-
-- `HeuristicLLMClient` so it works immediately without any model runtime
-- `OllamaLLMClient` so you can run summaries and answers with a local model
+The current MVP requires an AI backend for compilation and question answering.
+Right now the supported runtime is `OllamaLLMClient`, so you should have a local Ollama server available before running `compile` or `answer`.
 
 ## Quick Start
 
 ```powershell
 python -m kb_mvp.cli init
-python -m kb_mvp.cli compile
-python -m kb_mvp.cli answer "What is this vault mainly about?"
+python -m kb_mvp.cli --ollama-model qwen2.5:3b compile
+python -m kb_mvp.cli --ollama-model qwen2.5:3b answer "What is this vault mainly about?"
 python -m kb_mvp.cli health-check
 ```
 
@@ -32,20 +30,19 @@ python -m kb_mvp.cli health-check
 If Ollama is already installed and the local server is running, switch the provider:
 
 ```powershell
-python -m kb_mvp.cli --provider ollama --ollama-model qwen2.5:3b compile
-python -m kb_mvp.cli --provider ollama --ollama-model qwen2.5:3b answer "What is this vault mainly about?"
+python -m kb_mvp.cli --ollama-model qwen2.5:3b compile
+python -m kb_mvp.cli --ollama-model qwen2.5:3b answer "What is this vault mainly about?"
 ```
 
 On CPU-only machines, if compile feels slow, increase the timeout or reduce the input size:
 
 ```powershell
-python -m kb_mvp.cli --provider ollama --ollama-model qwen2.5:3b --ollama-timeout 900 --compile-max-chars 4000 compile
+python -m kb_mvp.cli --ollama-model qwen2.5:3b --ollama-timeout 900 --compile-max-chars 4000 compile
 ```
 
 You can also set environment variables:
 
 ```powershell
-$env:KB_LLM_PROVIDER="ollama"
 $env:OLLAMA_MODEL="qwen2.5:3b"
 $env:OLLAMA_HOST="http://127.0.0.1:11434"
 python -m kb_mvp.cli compile

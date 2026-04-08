@@ -9,7 +9,24 @@ from kb_mvp.cli import ensure_sample_raw
 from kb_mvp.compiler import compile_vault
 from kb_mvp.config import build_paths, ensure_layout
 from kb_mvp.health import run_health_check
+from kb_mvp.llm import CompiledNote, LLMClient
 from kb_mvp.search import search_notes
+
+
+class StubLLMClient(LLMClient):
+    def compile_document(self, document) -> CompiledNote:
+        return CompiledNote(
+            summary="A concise AI-generated summary for testing.",
+            key_points=[
+                "Web clipping stores source material first.",
+                "Compiled notes help answer later questions.",
+                "Health checks catch wiki issues.",
+            ],
+            related_concepts=["knowledge base", "web clipping", "health check"],
+        )
+
+    def answer_question(self, question: str, contexts: list[tuple[str, str]]) -> str:
+        return f"Stub answer for: {question}"
 
 
 class PipelineTests(unittest.TestCase):
@@ -26,7 +43,7 @@ class PipelineTests(unittest.TestCase):
             ensure_layout(paths)
             ensure_sample_raw(paths.raw)
 
-            results = compile_vault(paths)
+            results = compile_vault(paths, StubLLMClient())
 
             self.assertEqual(len(results), 1)
             note_path = paths.sources / "sample-web-clip.md"
@@ -47,7 +64,7 @@ class PipelineTests(unittest.TestCase):
             paths = build_paths(root)
             ensure_layout(paths)
             ensure_sample_raw(paths.raw)
-            compile_vault(paths)
+            compile_vault(paths, StubLLMClient())
 
             findings, report_path = run_health_check(paths)
 

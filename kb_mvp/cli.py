@@ -8,7 +8,7 @@ import sys
 from .compiler import compile_vault
 from .config import build_paths, ensure_layout
 from .health import run_health_check
-from .llm import HeuristicLLMClient, LLMClient, OllamaLLMClient
+from .llm import LLMClient, OllamaLLMClient
 from .search import search_notes
 
 
@@ -16,15 +16,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Web clipper knowledge base MVP")
     parser.add_argument("--project-root", default=".", help="Project root containing the vault directory")
     parser.add_argument(
-        "--provider",
-        choices=("heuristic", "ollama"),
-        default=os.environ.get("KB_LLM_PROVIDER", "heuristic"),
-        help="Which summarizer / answering backend to use",
-    )
-    parser.add_argument(
         "--ollama-model",
         default=os.environ.get("OLLAMA_MODEL", ""),
-        help="Ollama model name, for example qwen2.5:3b",
+        help="Required Ollama model name, for example qwen2.5:3b",
     )
     parser.add_argument(
         "--ollama-host",
@@ -96,10 +90,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_llm_client(args: argparse.Namespace) -> LLMClient:
-    if args.provider == "heuristic":
-        return HeuristicLLMClient()
     if not args.ollama_model:
-        raise SystemExit("--ollama-model is required when --provider ollama is selected.")
+        raise SystemExit(
+            "--ollama-model is required. This MVP now requires an AI backend for compile and answer."
+        )
     return OllamaLLMClient(
         model=args.ollama_model,
         host=args.ollama_host,
