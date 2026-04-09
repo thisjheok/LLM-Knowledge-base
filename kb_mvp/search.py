@@ -8,6 +8,26 @@ from .config import VaultPaths
 
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]+")
+STOPWORD_TOKENS = {
+    "a",
+    "an",
+    "and",
+    "are",
+    "current",
+    "described",
+    "does",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "the",
+    "this",
+    "to",
+    "using",
+    "what",
+    "wiki",
+}
 
 
 @dataclass(frozen=True)
@@ -25,40 +45,44 @@ def search_notes(notes_dir: Path, query: str, limit: int = 5) -> list[SearchHit]
 
 
 def search_wiki(paths: VaultPaths, query: str) -> list[SearchHit]:
-    index_hits = search_markdown_dir(paths.indexes, query, limit=3, note_type="index")
-    concept_hits = search_markdown_dir(paths.concepts, query, limit=4, note_type="concept")
+    focus_terms = extract_focus_terms(query)
+    index_hits = search_markdown_dir(paths.indexes, query, limit=3, note_type="index", focus_terms=focus_terms)
+    concept_hits = search_markdown_dir(paths.concepts, query, limit=4, note_type="concept", focus_terms=focus_terms)
 
     concept_ids = collect_link_targets(index_hits) | {hit.note_id for hit in concept_hits}
-    enriched_concepts = load_specific_hits(paths.concepts, concept_ids, query, note_type="concept")
+    enriched_concepts = load_specific_hits(paths.concepts, concept_ids, query, note_type="concept", focus_terms=focus_terms)
     merged_concepts = dedupe_hits_by_id(concept_hits + enriched_concepts)
     merged_concepts.sort(key=lambda hit: (-hit.score, hit.title.lower()))
     merged_concepts = merged_concepts[:4]
 
     source_ids = collect_link_targets(index_hits) | collect_link_targets(merged_concepts)
-    source_hits = load_specific_hits(paths.sources, source_ids, query, note_type="source")
+    source_hits = load_specific_hits(paths.sources, source_ids, query, note_type="source", focus_terms=focus_terms)
     if len(source_hits) < 3:
-        source_hits.extend(search_markdown_dir(paths.sources, query, limit=3, note_type="source"))
+        source_hits.extend(search_markdown_dir(paths.sources, query, limit=5, note_type="source", focus_terms=focus_terms))
     merged_sources = dedupe_hits_by_id(source_hits)
     merged_sources.sort(key=lambda hit: (-hit.score, hit.title.lower()))
     merged_sources = merged_sources[:3]
+    direct_sources = find_direct_source_hits(paths.sources, query, focus_terms, limit=3)
 
     staged_hits: list[SearchHit] = []
     staged_hits.extend(index_hits[:1])
     staged_hits.extend(merged_concepts[:2])
+    staged_hits.extend(direct_sources[:2])
     staged_hits.extend(merged_sources[:2])
     staged_hits.extend(index_hits[1:2])
     staged_hits.extend(merged_concepts[2:])
+    staged_hits.extend(direct_sources[2:])
     staged_hits.extend(merged_sources[2:])
     return dedupe_hits_by_type_and_id(staged_hits)
 
 
-def search_markdown_dir(directory: Path, query: str, *, limit: int, note_type: str) -> list[SearchHit]:
+def search_markdown_dir(directory: Path, query: str, *, limit: int, note_type: str, focus_terms: set[str] | None = None) -> list[SearchHit]:
     query_tokens = tokenize(query)
     hits: list[SearchHit] = []
     if not directory.exists():
         return hits
     for path in sorted(directory.glob("*.md")):
-        hit = build_search_hit(path, note_type=note_type, query_tokens=query_tokens)
+        hit = build_search_hit(path, note_type=note_type, query_tokens=query_tokens, focus_terms=focus_terms or set())
         if hit is None:
             continue
         hits.append(hit)
@@ -66,24 +90,25 @@ def search_markdown_dir(directory: Path, query: str, *, limit: int, note_type: s
     return hits[:limit]
 
 
-def load_specific_hits(directory: Path, note_ids: set[str], query: str, *, note_type: str) -> list[SearchHit]:
+def load_specific_hits(directory: Path, note_ids: set[str], query: str, *, note_type: str, focus_terms: set[str] | None = None) -> list[SearchHit]:
     query_tokens = tokenize(query)
     hits: list[SearchHit] = []
     for note_id in sorted(note_ids):
         path = directory / f"{note_id}.md"
         if not path.exists():
             continue
-        hit = build_search_hit(path, note_type=note_type, query_tokens=query_tokens)
+        hit = build_search_hit(path, note_type=note_type, query_tokens=query_tokens, focus_terms=focus_terms or set())
         if hit is None:
             continue
         hits.append(hit)
     return hits
 
 
-def build_search_hit(path: Path, *, note_type: str, query_tokens: set[str]) -> SearchHit | None:
+def build_search_hit(path: Path, *, note_type: str, query_tokens: set[str], focus_terms: set[str]) -> SearchHit | None:
     text = path.read_text(encoding="utf-8")
     haystack_tokens = [token.lower() for token in TOKEN_RE.findall(text)]
     score = sum(haystack_tokens.count(token) for token in query_tokens)
+    score += compute_focus_boost(path, text, note_type=note_type, focus_terms=focus_terms)
     if score <= 0:
         return None
     title = extract_title(text) or extract_heading(text) or path.stem.replace("-", " ").title()
@@ -176,6 +201,58 @@ def tokenize(text: str) -> set[str]:
     return {token.lower() for token in TOKEN_RE.findall(text)}
 
 
+def extract_focus_terms(query: str) -> set[str]:
+    raw_tokens = tokenize(query)
+    return {token for token in raw_tokens if len(token) >= 3 and token not in STOPWORD_TOKENS}
+
+
+def compute_focus_boost(path: Path, markdown: str, *, note_type: str, focus_terms: set[str]) -> int:
+    if not focus_terms:
+        return 0
+    title = (extract_title(markdown) or extract_heading(markdown) or path.stem).lower()
+    title_tokens = tokenize(title.replace("-", " "))
+    title_overlap = len(focus_terms & title_tokens)
+    phrase_matches = count_focus_phrase_matches(path.stem, title, focus_terms)
+    if note_type == "source":
+        related_concepts = tokenize(extract_section(markdown, "Related Concepts"))
+        boost = title_overlap * 5
+        boost += phrase_matches * 4
+        boost += len(focus_terms & related_concepts) * 2
+        if title_overlap >= max(1, len(focus_terms) - 1):
+            boost += 4
+        return boost
+    if note_type == "concept":
+        return title_overlap * 3 + phrase_matches * 2
+    return title_overlap + phrase_matches
+
+
+def count_focus_phrase_matches(note_id: str, title: str, focus_terms: set[str]) -> int:
+    joined = " ".join(sorted(focus_terms))
+    variants = {
+        joined,
+        joined.replace(" ", "-"),
+        " ".join(sorted(singularize_token(term) for term in focus_terms)),
+    }
+    haystacks = {note_id.lower(), title.lower()}
+    return sum(1 for variant in variants if variant and any(variant in haystack for haystack in haystacks))
+
+
+def find_direct_source_hits(sources_dir: Path, query: str, focus_terms: set[str], limit: int) -> list[SearchHit]:
+    if not focus_terms:
+        return []
+    direct_hits = search_markdown_dir(sources_dir, query, limit=limit + 3, note_type="source", focus_terms=focus_terms)
+    filtered = [hit for hit in direct_hits if is_direct_source_match(hit, focus_terms)]
+    filtered.sort(key=lambda hit: (-hit.score, hit.title.lower()))
+    return filtered[:limit]
+
+
+def is_direct_source_match(hit: SearchHit, focus_terms: set[str]) -> bool:
+    note_tokens = tokenize(hit.note_id.replace("-", " "))
+    title_tokens = tokenize(hit.title)
+    overlap = len(focus_terms & (note_tokens | title_tokens))
+    return overlap >= max(1, min(2, len(focus_terms)))
+
+
 def extract_title(markdown: str) -> str | None:
     match = re.search(r'^title:\s*"?(?P<title>.+?)"?$', markdown, re.MULTILINE)
     return match.group("title") if match else None
@@ -212,3 +289,15 @@ def build_snippet(markdown: str, query_tokens: set[str], limit: int = 220) -> st
 def extract_section(markdown: str, heading: str) -> str:
     match = re.search(rf"## {re.escape(heading)}\n(?P<body>.*?)(?:\n## |\Z)", markdown, re.DOTALL)
     return match.group("body").strip() if match else ""
+
+
+def singularize_token(token: str) -> str:
+    if len(token) <= 3:
+        return token
+    if token.endswith("ies") and len(token) > 4:
+        return token[:-3] + "y"
+    if token.endswith("ses") and len(token) > 4:
+        return token[:-2]
+    if token.endswith("s") and not token.endswith("ss"):
+        return token[:-1]
+    return token

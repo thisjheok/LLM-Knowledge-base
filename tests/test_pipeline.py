@@ -14,6 +14,7 @@ from kb_mvp.health import run_health_check
 from kb_mvp.llm import (
     CompiledNote,
     ConceptRelationshipReview,
+    QueryPlan,
     ConceptUpdate,
     LLMClient,
     OllamaLLMClient,
@@ -25,6 +26,15 @@ from kb_mvp.search import search_notes, search_wiki
 class StubLLMClient(LLMClient):
     def __init__(self) -> None:
         self.compile_related_notes: list[list[str]] = []
+
+    def plan_query(self, question: str) -> QueryPlan:
+        return QueryPlan(
+            intent="broad",
+            primary_concepts=[],
+            source_focus_terms=[],
+            prefer_direct_source=False,
+            prefer_concepts=True,
+        )
 
     def compile_document(self, document, related_notes=None) -> CompiledNote:
         self.compile_related_notes.append([note.note_id for note in (related_notes or [])])
@@ -311,6 +321,35 @@ class PipelineTests(unittest.TestCase):
                 "Chat API",
             ],
         )
+
+    def test_search_wiki_prioritizes_direct_source_match(self) -> None:
+        root = self.make_workspace_tempdir()
+        try:
+            paths = build_paths(root)
+            ensure_layout(paths)
+            ensure_sample_raw(paths.raw)
+            (paths.raw / "Offline Inference - vLLM.md").write_text(
+                "\n".join(
+                    [
+                        "# Offline Inference",
+                        "",
+                        "Offline inference is possible in your own code using vLLM's LLM class.",
+                        "Use the LLM class to run local model inference.",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            compile_vault(paths, StubLLMClient())
+
+            hits = search_wiki(paths, "How is offline inference described in the current wiki?")
+
+            self.assertTrue(hits)
+            source_hits = [hit for hit in hits if hit.note_type == "source"]
+            self.assertTrue(source_hits)
+            self.assertEqual(source_hits[0].note_id, "offline-inference-vllm")
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
 
 
 if __name__ == "__main__":

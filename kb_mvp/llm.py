@@ -41,8 +41,20 @@ class ConceptRelationshipReview:
     heuristic_reasons: list[str]
 
 
+@dataclass
+class QueryPlan:
+    intent: str
+    primary_concepts: list[str]
+    source_focus_terms: list[str]
+    prefer_direct_source: bool
+    prefer_concepts: bool
+
+
 class LLMClient:
     def compile_document(self, document: ExtractedDocument, related_notes: list[WikiNote] | None = None) -> CompiledNote:
+        raise NotImplementedError
+
+    def plan_query(self, question: str) -> QueryPlan:
         raise NotImplementedError
 
     def update_concept(
